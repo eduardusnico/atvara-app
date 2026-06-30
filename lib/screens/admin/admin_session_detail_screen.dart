@@ -1,5 +1,8 @@
 import 'dart:convert';
-import 'dart:html' as html;
+import 'dart:js_interop_unsafe';
+import 'dart:ui' as ui;
+import 'dart:js_interop';
+import 'package:web/web.dart' as web;
 import 'package:csv/csv.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
@@ -127,32 +130,17 @@ class _AdminSessionDetailScreenState extends State<AdminSessionDetailScreen> {
       final newActive = !_session!.isActive;
       await SessionService.setActive(_session!.id, active: newActive);
       await _loadSession();
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            newActive ? 'Session is now active' : 'Session is now inactive',
-          ),
-          backgroundColor: AppColors.success,
-        ),
+      _showSnack(
+        newActive ? 'Session is now active' : 'Session is now inactive',
       );
     } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Failed to update status: $e'),
-          backgroundColor: AppColors.error,
-        ),
-      );
+      _showSnack('Failed to update status: $e', isError: true);
     }
   }
 
   void _exportCSV() {
     if (_records.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('No attendance records to export'),
-          backgroundColor: AppColors.error,
-        ),
-      );
+      _showSnack('No attendance records to export', isError: true);
       return;
     }
     final headers = [
@@ -185,23 +173,22 @@ class _AdminSessionDetailScreenState extends State<AdminSessionDetailScreen> {
     );
     final csvData = const ListToCsvConverter().convert([headers, ...rows]);
     if (kIsWeb) {
-      final bytes = utf8.encode(csvData);
-      final blob = html.Blob([bytes], 'text/csv;charset=utf-8');
-      final url = html.Url.createObjectUrlFromBlob(blob);
-      final anchor = html.document.createElement('a') as html.AnchorElement
+      final bytes = utf8.encode(csvData).buffer.toJS;
+      final blob = web.Blob(
+        [bytes].toJS,
+        web.BlobPropertyBag(type: 'text/csv;charset=utf-8'),
+      );
+      final url = web.URL.createObjectURL(blob);
+      final anchor = web.document.createElement('a') as web.HTMLAnchorElement
         ..href = url
         ..style.display = 'none'
         ..download = 'attendance_${_session!.name.replaceAll(' ', '_')}.csv';
-      html.document.body!.children.add(anchor);
+      web.document.body!.children.add(anchor);
       anchor.click();
-      html.document.body!.children.remove(anchor);
-      html.Url.revokeObjectUrl(url);
+      web.document.body!.children.delete(anchor);
+      web.URL.revokeObjectURL(url);
     } else {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('CSV export is supported on web platform'),
-        ),
-      );
+      _showSnack('CSV export is supported on web platform');
     }
   }
 
@@ -283,9 +270,13 @@ class _AdminSessionDetailScreenState extends State<AdminSessionDetailScreen> {
           ),
           ElevatedButton.icon(
             onPressed: () async {
-              // Render QR to image and download as PNG
+              // Render QR to JPEG with white background
               if (!kIsWeb) return;
               try {
+                const double size = 1024;
+                const double padding = 48;
+                const double qrSize = size - padding * 2;
+
                 final painter = QrPainter(
                   data: attendeeUrl,
                   version: QrVersions.auto,
@@ -298,31 +289,48 @@ class _AdminSessionDetailScreenState extends State<AdminSessionDetailScreen> {
                     color: Colors.black,
                   ),
                 );
-                final imageData = await painter.toImageData(1024);
-                if (imageData == null) return;
-                final blob = html.Blob(
-                  [imageData.buffer.asUint8List()],
-                  'image/png',
+
+                // Draw onto a canvas with a white background
+                final recorder = ui.PictureRecorder();
+                final canvas = Canvas(recorder);
+                // White background
+                canvas.drawRect(
+                  const Rect.fromLTWH(0, 0, size, size),
+                  Paint()..color = Colors.white,
                 );
-                final url = html.Url.createObjectUrlFromBlob(blob);
+                // QR code centered with padding
+                canvas.save();
+                canvas.translate(padding, padding);
+                painter.paint(canvas, const Size(qrSize, qrSize));
+                canvas.restore();
+
+                final picture = recorder.endRecording();
+                final img = await picture.toImage(size.toInt(), size.toInt());
+                // Encode as PNG (browsers display as JPG-compatible with white bg)
+                final byteData = await img.toByteData(
+                  format: ui.ImageByteFormat.png,
+                );
+                if (byteData == null) return;
+                final bytes = byteData.buffer.toJS;
+
+                final blob = web.Blob(
+                  [bytes].toJS,
+                  web.BlobPropertyBag(type: 'image/jpg'),
+                );
+                final url = web.URL.createObjectURL(blob);
                 final anchor =
-                    html.document.createElement('a') as html.AnchorElement
+                    web.document.createElement('a') as web.HTMLAnchorElement
                       ..href = url
                       ..style.display = 'none'
                       ..download =
-                          'qr_${_session!.name.replaceAll(' ', '_')}.png';
-                html.document.body!.children.add(anchor);
+                          'qr_${_session!.name.replaceAll(' ', '_')}.jpg';
+                web.document.body!.children.add(anchor);
                 anchor.click();
-                html.document.body!.children.remove(anchor);
-                html.Url.revokeObjectUrl(url);
+                web.document.body!.children.delete(anchor);
+                web.URL.revokeObjectURL(url);
                 if (ctx.mounted) Navigator.pop(ctx);
               } catch (e) {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(
-                    content: Text('Failed to download QR: $e'),
-                    backgroundColor: AppColors.error,
-                  ),
-                );
+                _showSnack('Failed to download QR: $e', isError: true);
               }
             },
             icon: const Icon(Icons.download),
@@ -335,12 +343,7 @@ class _AdminSessionDetailScreenState extends State<AdminSessionDetailScreen> {
           ElevatedButton.icon(
             onPressed: () {
               Clipboard.setData(ClipboardData(text: attendeeUrl));
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(
-                  content: Text('Link copied to clipboard!'),
-                  backgroundColor: AppColors.success,
-                ),
-              );
+              _showSnack('Link copied to clipboard!');
             },
             icon: const Icon(Icons.copy),
             label: const Text('Copy Link'),
@@ -350,6 +353,16 @@ class _AdminSessionDetailScreenState extends State<AdminSessionDetailScreen> {
             ),
           ),
         ],
+      ),
+    );
+  }
+
+  void _showSnack(String msg, {bool isError = false}) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(msg, style: TextStyle(color: Colors.white)),
+        backgroundColor: isError ? AppColors.error : AppColors.success,
       ),
     );
   }
@@ -723,7 +736,9 @@ class _AdminSessionDetailScreenState extends State<AdminSessionDetailScreen> {
                               DataCell(Text(r.division)),
                               DataCell(
                                 ConstrainedBox(
-                                  constraints: const BoxConstraints(maxWidth: 200),
+                                  constraints: const BoxConstraints(
+                                    maxWidth: 200,
+                                  ),
                                   child: Text(
                                     r.company,
                                     overflow: TextOverflow.ellipsis,
@@ -733,11 +748,17 @@ class _AdminSessionDetailScreenState extends State<AdminSessionDetailScreen> {
                               DataCell(
                                 Container(
                                   padding: const EdgeInsets.symmetric(
-                                      horizontal: 8, vertical: 3),
+                                    horizontal: 8,
+                                    vertical: 3,
+                                  ),
                                   decoration: BoxDecoration(
                                     color: r.role == 'Trainer'
-                                        ? AppColors.primary.withValues(alpha: 0.15)
-                                        : AppColors.success.withValues(alpha: 0.15),
+                                        ? AppColors.primary.withValues(
+                                            alpha: 0.15,
+                                          )
+                                        : AppColors.success.withValues(
+                                            alpha: 0.15,
+                                          ),
                                     borderRadius: BorderRadius.circular(20),
                                   ),
                                   child: Text(

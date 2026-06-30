@@ -412,7 +412,7 @@ class _AttendFormScreenState extends State<AttendFormScreen> {
                       _buildField(
                         controller: _divisionCtrl,
                         label: 'Division / Department',
-                        hint: 'e.g. Engineering, Marketing',
+                        hint: 'e.g. Backend, Mobile, Frontend',
                         icon: Icons.business_outlined,
                         validator: (v) => (v?.trim().isEmpty ?? true)
                             ? 'Division is required'
@@ -431,7 +431,7 @@ class _AttendFormScreenState extends State<AttendFormScreen> {
                               ),
                             )
                           : DropdownButtonFormField<String>(
-                              value: _selectedCompany,
+                              initialValue: _selectedCompany,
                               isExpanded: true,
                               decoration: AppTheme.inputDecoration(
                                 label: 'Company',

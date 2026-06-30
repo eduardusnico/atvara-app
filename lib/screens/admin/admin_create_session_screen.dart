@@ -1,8 +1,11 @@
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:go_router/go_router.dart';
 import 'package:intl/intl.dart';
 import 'package:latlong2/latlong.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../models/session.dart';
 import '../../services/location_service.dart';
@@ -11,15 +14,93 @@ import '../../theme.dart';
 import '../../widgets/glass_card.dart';
 import '../../widgets/gradient_button.dart';
 
+// ── Saved Location model ──────────────────────────────────────────────────────
+
+class SavedLocation {
+  final String id;
+  String name;
+  final double lat;
+  final double lng;
+
+  SavedLocation({
+    required this.id,
+    required this.name,
+    required this.lat,
+    required this.lng,
+  });
+
+  Map<String, dynamic> toJson() => {
+    'id': id,
+    'name': name,
+    'lat': lat,
+    'lng': lng,
+  };
+
+  factory SavedLocation.fromJson(Map<String, dynamic> json) => SavedLocation(
+    id: json['id'] as String,
+    name: json['name'] as String,
+    lat: (json['lat'] as num).toDouble(),
+    lng: (json['lng'] as num).toDouble(),
+  );
+}
+
+// ── Saved Locations Service (shared_preferences) ──────────────────────────────
+
+class SavedLocationsService {
+  static const _key = 'saved_locations';
+
+  static Future<List<SavedLocation>> load() async {
+    final prefs = await SharedPreferences.getInstance();
+    final raw = prefs.getString(_key);
+    if (raw == null || raw.isEmpty) return [];
+    try {
+      final List<dynamic> list = jsonDecode(raw) as List<dynamic>;
+      return list
+          .map((e) => SavedLocation.fromJson(e as Map<String, dynamic>))
+          .toList();
+    } catch (_) {
+      return [];
+    }
+  }
+
+  static Future<void> save(List<SavedLocation> locations) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(
+      _key,
+      jsonEncode(locations.map((l) => l.toJson()).toList()),
+    );
+  }
+
+  static Future<void> add(SavedLocation location) async {
+    final list = await load();
+    list.add(location);
+    await save(list);
+  }
+
+  static Future<void> update(SavedLocation updated) async {
+    final list = await load();
+    final idx = list.indexWhere((l) => l.id == updated.id);
+    if (idx != -1) {
+      list[idx] = updated;
+      await save(list);
+    }
+  }
+
+  static Future<void> remove(String id) async {
+    final list = await load();
+    list.removeWhere((l) => l.id == id);
+    await save(list);
+  }
+}
+
+// ── Screen ────────────────────────────────────────────────────────────────────
+
 class AdminCreateSessionScreen extends StatefulWidget {
   const AdminCreateSessionScreen({super.key});
   @override
   State<AdminCreateSessionScreen> createState() =>
       _AdminCreateSessionScreenState();
 }
-
-// Remember the last-used coordinates across screen visits within the session.
-LatLng? _recentLocation;
 
 class _AdminCreateSessionScreenState extends State<AdminCreateSessionScreen> {
   final _formKey = GlobalKey<FormState>();
@@ -38,6 +119,15 @@ class _AdminCreateSessionScreenState extends State<AdminCreateSessionScreen> {
   bool _detectingLocation = false;
   String? _errorMessage;
 
+  List<SavedLocation> _savedLocations = [];
+  bool _savedLocationsLoaded = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadSavedLocations();
+  }
+
   @override
   void dispose() {
     _nameCtrl.dispose();
@@ -48,13 +138,22 @@ class _AdminCreateSessionScreenState extends State<AdminCreateSessionScreen> {
     super.dispose();
   }
 
+  Future<void> _loadSavedLocations() async {
+    final list = await SavedLocationsService.load();
+    if (mounted) {
+      setState(() {
+        _savedLocations = list;
+        _savedLocationsLoaded = true;
+      });
+    }
+  }
+
   // ── Coordinate helpers ─────────────────────────────────────────────────────
 
   void _fillCoords(double lat, double lng) {
     setState(() {
       _latCtrl.text = lat.toStringAsFixed(6);
       _lngCtrl.text = lng.toStringAsFixed(6);
-      _recentLocation = LatLng(lat, lng);
     });
   }
 
@@ -135,12 +234,9 @@ class _AdminCreateSessionScreenState extends State<AdminCreateSessionScreen> {
     if (result.isSuccess) {
       final pos = result.position!;
       _fillCoords(pos.latitude, pos.longitude);
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Successfully detected current coordinates'),
-          backgroundColor: AppColors.success,
-        ),
-      );
+      _showSnack('Successfully detected current coordinates');
+      // Ask if admin wants to save this location
+      _offerToSaveLocation(pos.latitude, pos.longitude);
     } else {
       setState(() {
         _errorMessage = result.error ?? 'Could not detect location';
@@ -151,11 +247,8 @@ class _AdminCreateSessionScreenState extends State<AdminCreateSessionScreen> {
   // ── Map picker ─────────────────────────────────────────────────────────────
 
   Future<void> _openMapPicker() async {
-    // Default center: Jakarta if no recent location
-    LatLng center = _recentLocation ??
-        const LatLng(-6.2088, 106.8456); // Jakarta
+    LatLng center = const LatLng(-6.2088, 106.8456); // Jakarta default
 
-    // Read current field values if valid
     final curLat = double.tryParse(_latCtrl.text);
     final curLng = double.tryParse(_lngCtrl.text);
     if (curLat != null && curLng != null) {
@@ -169,18 +262,54 @@ class _AdminCreateSessionScreenState extends State<AdminCreateSessionScreen> {
 
     if (result != null) {
       _fillCoords(result.latitude, result.longitude);
+      if (mounted) {
+        _offerToSaveLocation(result.latitude, result.longitude);
+      }
     }
   }
 
-  // ── Use recent location ────────────────────────────────────────────────────
+  // ── Save location prompt ───────────────────────────────────────────────────
 
-  void _useRecentLocation() {
-    if (_recentLocation == null) return;
-    _fillCoords(_recentLocation!.latitude, _recentLocation!.longitude);
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text('Recent location applied'),
-        backgroundColor: AppColors.success,
+  void _offerToSaveLocation(double lat, double lng) {
+    showDialog(
+      context: context,
+      builder: (ctx) => _SaveLocationDialog(lat: lat, lng: lng),
+    ).then((saved) {
+      if (saved != null && mounted) {
+        SavedLocationsService.add(saved).then((_) => _loadSavedLocations());
+      }
+    });
+  }
+
+  // ── Saved locations dialog ─────────────────────────────────────────────────
+
+  void _openSavedLocations() {
+    showDialog(
+      context: context,
+      builder: (ctx) => _SavedLocationsDialog(
+        locations: _savedLocations,
+        onSelect: (loc) {
+          Navigator.pop(ctx);
+          _fillCoords(loc.lat, loc.lng);
+          _showSnack('Applied saved location: ${loc.name}');
+        },
+        onDelete: (loc) async {
+          await SavedLocationsService.remove(loc.id);
+          await _loadSavedLocations();
+          if (ctx.mounted) Navigator.pop(ctx);
+          if (mounted) {
+            _openSavedLocations(); // reopen with updated list
+          }
+        },
+        onEdit: (loc, newName) async {
+          loc.name = newName;
+          await SavedLocationsService.update(loc);
+          await _loadSavedLocations();
+          if (ctx.mounted) Navigator.pop(ctx);
+          if (mounted) {
+            _openSavedLocations(); // reopen with updated list
+          }
+        },
       ),
     );
   }
@@ -239,12 +368,7 @@ class _AdminCreateSessionScreenState extends State<AdminCreateSessionScreen> {
       );
       await SessionService.createSession(session);
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Session created successfully'),
-          backgroundColor: AppColors.success,
-        ),
-      );
+      _showSnack('Session created successfully');
       context.go('/admin/sessions');
     } catch (e) {
       if (mounted) {
@@ -254,6 +378,16 @@ class _AdminCreateSessionScreenState extends State<AdminCreateSessionScreen> {
         });
       }
     }
+  }
+
+  void _showSnack(String msg, {bool isError = false}) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(msg, style: TextStyle(color: Colors.white)),
+        backgroundColor: isError ? AppColors.error : AppColors.success,
+      ),
+    );
   }
 
   @override
@@ -360,14 +494,47 @@ class _AdminCreateSessionScreenState extends State<AdminCreateSessionScreen> {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        // Title row
-                        Text(
-                          'Location Settings',
-                          style: Theme.of(context).textTheme.titleMedium
-                              ?.copyWith(
-                                color: AppColors.primary,
-                                fontWeight: FontWeight.bold,
+                        // Title row with saved locations count badge
+                        Row(
+                          children: [
+                            Expanded(
+                              child: Text(
+                                'Location Settings',
+                                style: Theme.of(context).textTheme.titleMedium
+                                    ?.copyWith(
+                                      color: AppColors.primary,
+                                      fontWeight: FontWeight.bold,
+                                    ),
                               ),
+                            ),
+                            if (_savedLocationsLoaded &&
+                                _savedLocations.isNotEmpty)
+                              Container(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 8,
+                                  vertical: 2,
+                                ),
+                                decoration: BoxDecoration(
+                                  color: AppColors.primary.withValues(
+                                    alpha: 0.15,
+                                  ),
+                                  borderRadius: BorderRadius.circular(12),
+                                  border: Border.all(
+                                    color: AppColors.primary.withValues(
+                                      alpha: 0.4,
+                                    ),
+                                  ),
+                                ),
+                                child: Text(
+                                  '${_savedLocations.length} saved',
+                                  style: const TextStyle(
+                                    color: AppColors.primary,
+                                    fontSize: 11,
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
+                              ),
+                          ],
                         ),
                         const SizedBox(height: 16),
 
@@ -405,19 +572,24 @@ class _AdminCreateSessionScreenState extends State<AdminCreateSessionScreen> {
                                 foregroundColor: AppColors.primary,
                               ),
                             ),
-                            // Recent location
-                            if (_recentLocation != null)
-                              TextButton.icon(
-                                onPressed: _useRecentLocation,
-                                icon: const Icon(Icons.history, size: 18),
-                                label: Text(
-                                  'Recent (${_recentLocation!.latitude.toStringAsFixed(3)}, '
-                                  '${_recentLocation!.longitude.toStringAsFixed(3)})',
-                                ),
-                                style: TextButton.styleFrom(
-                                  foregroundColor: AppColors.warning,
-                                ),
+                            // Saved locations
+                            TextButton.icon(
+                              onPressed: _savedLocationsLoaded
+                                  ? _openSavedLocations
+                                  : null,
+                              icon: const Icon(
+                                Icons.bookmark_outlined,
+                                size: 18,
                               ),
+                              label: Text(
+                                _savedLocations.isEmpty
+                                    ? 'Saved Locations'
+                                    : 'Saved Locations (${_savedLocations.length})',
+                              ),
+                              style: TextButton.styleFrom(
+                                foregroundColor: AppColors.warning,
+                              ),
+                            ),
                           ],
                         ),
                         const SizedBox(height: 16),
@@ -651,6 +823,224 @@ class _AdminCreateSessionScreenState extends State<AdminCreateSessionScreen> {
   }
 }
 
+// ── Save Location Dialog ──────────────────────────────────────────────────────
+
+class _SaveLocationDialog extends StatefulWidget {
+  final double lat;
+  final double lng;
+
+  const _SaveLocationDialog({required this.lat, required this.lng});
+
+  @override
+  State<_SaveLocationDialog> createState() => _SaveLocationDialogState();
+}
+
+class _SaveLocationDialogState extends State<_SaveLocationDialog> {
+  final _ctrl = TextEditingController();
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      backgroundColor: AppColors.surface,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      title: const Row(
+        children: [
+          Icon(Icons.bookmark_add, color: AppColors.primary),
+          SizedBox(width: 10),
+          Text('Save Location'),
+        ],
+      ),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'Coordinates: ${widget.lat.toStringAsFixed(6)}, ${widget.lng.toStringAsFixed(6)}',
+            style: const TextStyle(
+              color: AppColors.primary,
+              fontFamily: 'monospace',
+              fontSize: 12,
+            ),
+          ),
+          const SizedBox(height: 16),
+          TextField(
+            controller: _ctrl,
+            autofocus: true,
+            decoration: const InputDecoration(
+              labelText: 'Location Name',
+              hintText: 'e.g., Head Office, Warehouse A',
+              prefixIcon: Icon(Icons.label_outline),
+            ),
+          ),
+        ],
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('Skip'),
+        ),
+        ElevatedButton.icon(
+          onPressed: () {
+            final name = _ctrl.text.trim();
+            if (name.isEmpty) return;
+            final saved = SavedLocation(
+              id: DateTime.now().millisecondsSinceEpoch.toString(),
+              name: name,
+              lat: widget.lat,
+              lng: widget.lng,
+            );
+            Navigator.pop(context, saved);
+          },
+          icon: const Icon(Icons.save),
+          label: const Text('Save'),
+          style: ElevatedButton.styleFrom(
+            backgroundColor: AppColors.primary,
+            foregroundColor: Colors.white,
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+// ── Saved Locations Dialog ────────────────────────────────────────────────────
+
+class _SavedLocationsDialog extends StatelessWidget {
+  final List<SavedLocation> locations;
+  final void Function(SavedLocation) onSelect;
+  final void Function(SavedLocation) onDelete;
+  final void Function(SavedLocation, String) onEdit;
+
+  const _SavedLocationsDialog({
+    required this.locations,
+    required this.onSelect,
+    required this.onDelete,
+    required this.onEdit,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Dialog(
+      backgroundColor: AppColors.surface,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      child: SizedBox(
+        width: 480,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            // Header
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 16, 8, 0),
+              child: Row(
+                children: [
+                  const Icon(Icons.bookmark, color: AppColors.primary),
+                  const SizedBox(width: 10),
+                  const Expanded(
+                    child: Text(
+                      'Saved Locations',
+                      style: TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ),
+                  IconButton(
+                    icon: const Icon(Icons.close),
+                    onPressed: () => Navigator.pop(context),
+                  ),
+                ],
+              ),
+            ),
+            const Padding(
+              padding: EdgeInsets.symmetric(horizontal: 20, vertical: 4),
+              child: Text(
+                'Tap a location to apply it. Use the icons to edit or delete.',
+                style: TextStyle(color: Colors.grey, fontSize: 12),
+              ),
+            ),
+            const Divider(color: Colors.white12),
+
+            // Location list
+            if (locations.isEmpty)
+              const Padding(
+                padding: EdgeInsets.all(32),
+                child: Column(
+                  children: [
+                    Icon(Icons.bookmark_border, size: 48, color: Colors.grey),
+                    SizedBox(height: 12),
+                    Text(
+                      'No saved locations yet.\nUse GPS or map picker to detect a location,\nthen save it for quick reuse.',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(color: Colors.grey),
+                    ),
+                  ],
+                ),
+              )
+            else
+              ConstrainedBox(
+                constraints: const BoxConstraints(maxHeight: 380),
+                child: ListView.separated(
+                  shrinkWrap: true,
+                  padding: const EdgeInsets.symmetric(vertical: 8),
+                  itemCount: locations.length,
+                  separatorBuilder: (_, _) =>
+                      const Divider(height: 1, color: Colors.white10),
+                  itemBuilder: (ctx, i) {
+                    final loc = locations[i];
+                    return ListTile(
+                      leading: Container(
+                        width: 36,
+                        height: 36,
+                        decoration: BoxDecoration(
+                          color: AppColors.primary.withValues(alpha: 0.15),
+                          shape: BoxShape.circle,
+                        ),
+                        child: const Icon(
+                          Icons.location_pin,
+                          color: AppColors.primary,
+                          size: 20,
+                        ),
+                      ),
+                      title: Text(
+                        loc.name,
+                        style: const TextStyle(fontWeight: FontWeight.w600),
+                      ),
+                      subtitle: Text(
+                        '${loc.lat.toStringAsFixed(6)}, ${loc.lng.toStringAsFixed(6)}',
+                        style: const TextStyle(
+                          fontFamily: 'monospace',
+                          fontSize: 11,
+                          color: Colors.grey,
+                        ),
+                      ),
+                      trailing: IconButton(
+                        icon: const Icon(
+                          Icons.delete_outline,
+                          size: 18,
+                          color: AppColors.error,
+                        ),
+                        tooltip: 'Delete',
+                        onPressed: () => onDelete(loc),
+                      ),
+                      onTap: () => onSelect(loc),
+                    );
+                  },
+                ),
+              ),
+            const SizedBox(height: 8),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 // ── Map Picker Dialog ─────────────────────────────────────────────────────────
 
 class _MapPickerDialog extends StatefulWidget {
@@ -693,10 +1083,9 @@ class _MapPickerDialogState extends State<_MapPickerDialog> {
                   Expanded(
                     child: Text(
                       'Pick Location on Map',
-                      style: Theme.of(context)
-                          .textTheme
-                          .titleLarge
-                          ?.copyWith(fontWeight: FontWeight.bold),
+                      style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                        fontWeight: FontWeight.bold,
+                      ),
                     ),
                   ),
                   IconButton(
@@ -710,10 +1099,9 @@ class _MapPickerDialogState extends State<_MapPickerDialog> {
               padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 6),
               child: Text(
                 'Tap anywhere on the map to set the geofence center.',
-                style: Theme.of(context)
-                    .textTheme
-                    .bodySmall
-                    ?.copyWith(color: Colors.grey[400]),
+                style: Theme.of(
+                  context,
+                ).textTheme.bodySmall?.copyWith(color: Colors.grey[400]),
               ),
             ),
             const Divider(color: Colors.white12),
@@ -722,7 +1110,8 @@ class _MapPickerDialogState extends State<_MapPickerDialog> {
             Expanded(
               child: ClipRRect(
                 borderRadius: const BorderRadius.vertical(
-                    bottom: Radius.circular(0)),
+                  bottom: Radius.circular(0),
+                ),
                 child: FlutterMap(
                   mapController: _mapController,
                   options: MapOptions(
@@ -762,8 +1151,9 @@ class _MapPickerDialogState extends State<_MapPickerDialog> {
               padding: const EdgeInsets.all(16),
               decoration: BoxDecoration(
                 color: Colors.white.withValues(alpha: 0.05),
-                borderRadius:
-                    const BorderRadius.vertical(bottom: Radius.circular(16)),
+                borderRadius: const BorderRadius.vertical(
+                  bottom: Radius.circular(16),
+                ),
               ),
               child: Row(
                 children: [
@@ -773,9 +1163,7 @@ class _MapPickerDialogState extends State<_MapPickerDialog> {
                       children: [
                         Text(
                           'Selected Coordinates',
-                          style: Theme.of(context)
-                              .textTheme
-                              .bodySmall
+                          style: Theme.of(context).textTheme.bodySmall
                               ?.copyWith(color: Colors.grey[400]),
                         ),
                         const SizedBox(height: 2),

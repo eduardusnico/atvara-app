@@ -8,6 +8,7 @@ import 'package:latlong2/latlong.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../models/session.dart';
+import '../../widgets/attendance_mode_selector.dart';
 import '../../services/location_service.dart';
 import '../../services/session_service.dart';
 import '../../theme.dart';
@@ -118,6 +119,7 @@ class _AdminCreateSessionScreenState extends State<AdminCreateSessionScreen> {
   bool _loading = false;
   bool _detectingLocation = false;
   String? _errorMessage;
+  AttendanceMode _attendanceMode = AttendanceMode.offline;
 
   List<SavedLocation> _savedLocations = [];
   bool _savedLocationsLoaded = false;
@@ -318,17 +320,25 @@ class _AdminCreateSessionScreenState extends State<AdminCreateSessionScreen> {
 
   Future<void> _save() async {
     if (!_formKey.currentState!.validate()) return;
-    final lat = double.tryParse(_latCtrl.text);
-    final lng = double.tryParse(_lngCtrl.text);
-    final radius = int.tryParse(_radiusCtrl.text);
-    if (lat == null || lng == null) {
-      setState(() => _errorMessage = 'Please enter valid coordinates');
-      return;
+
+    // Location fields only required for offline / hybrid
+    double lat = 0;
+    double lng = 0;
+    int radius = 0;
+    if (_attendanceMode != AttendanceMode.online) {
+      lat = double.tryParse(_latCtrl.text) ?? 0;
+      lng = double.tryParse(_lngCtrl.text) ?? 0;
+      radius = int.tryParse(_radiusCtrl.text) ?? 0;
+      if (lat == 0 && lng == 0) {
+        setState(() => _errorMessage = 'Please enter valid coordinates');
+        return;
+      }
+      if (radius <= 0) {
+        setState(() => _errorMessage = 'Please enter a valid radius (> 0)');
+        return;
+      }
     }
-    if (radius == null || radius <= 0) {
-      setState(() => _errorMessage = 'Please enter a valid radius (> 0)');
-      return;
-    }
+
     final startDateTime = DateTime(
       _startDate.year,
       _startDate.month,
@@ -365,6 +375,7 @@ class _AdminCreateSessionScreenState extends State<AdminCreateSessionScreen> {
         endTime: endDateTime,
         isActive: true,
         createdAt: DateTime.now(),
+        attendanceMode: _attendanceMode,
       );
       await SessionService.createSession(session);
       if (!mounted) return;
@@ -484,194 +495,174 @@ class _AdminCreateSessionScreenState extends State<AdminCreateSessionScreen> {
                           ),
                           maxLines: 2,
                         ),
+                        const SizedBox(height: 20),
+                        AttendanceModeSelector(
+                          selected: _attendanceMode,
+                          onChanged: (mode) =>
+                              setState(() => _attendanceMode = mode),
+                        ),
                       ],
                     ),
                   ),
                   const SizedBox(height: 20),
 
-                  // ── Geofencing Card ─────────────────────────────────────
-                  GlassCard(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        // Title row with saved locations count badge
-                        Row(
-                          children: [
-                            Expanded(
-                              child: Text(
-                                'Location Settings',
-                                style: Theme.of(context).textTheme.titleMedium
-                                    ?.copyWith(
-                                      color: AppColors.primary,
-                                      fontWeight: FontWeight.bold,
-                                    ),
-                              ),
-                            ),
-                            if (_savedLocationsLoaded &&
-                                _savedLocations.isNotEmpty)
-                              Container(
-                                padding: const EdgeInsets.symmetric(
-                                  horizontal: 8,
-                                  vertical: 2,
-                                ),
-                                decoration: BoxDecoration(
-                                  color: AppColors.primary.withValues(
-                                    alpha: 0.15,
-                                  ),
-                                  borderRadius: BorderRadius.circular(12),
-                                  border: Border.all(
-                                    color: AppColors.primary.withValues(
-                                      alpha: 0.4,
-                                    ),
-                                  ),
-                                ),
+                  // ── Geofencing Card (hidden for online mode) ─────────────
+                  if (_attendanceMode != AttendanceMode.online)
+                    GlassCard(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          // Title row with saved locations count badge
+                          Row(
+                            children: [
+                              Expanded(
                                 child: Text(
-                                  '${_savedLocations.length} saved',
-                                  style: const TextStyle(
-                                    color: AppColors.primary,
-                                    fontSize: 11,
-                                    fontWeight: FontWeight.bold,
-                                  ),
-                                ),
-                              ),
-                          ],
-                        ),
-                        const SizedBox(height: 16),
-
-                        // Action buttons row
-                        Wrap(
-                          spacing: 8,
-                          runSpacing: 8,
-                          children: [
-                            // Detect GPS
-                            TextButton.icon(
-                              onPressed: _detectingLocation
-                                  ? null
-                                  : _detectCurrentLocation,
-                              icon: _detectingLocation
-                                  ? const SizedBox(
-                                      width: 16,
-                                      height: 16,
-                                      child: CircularProgressIndicator(
-                                        strokeWidth: 2,
-                                        color: AppColors.secondary,
+                                  'Location Settings',
+                                  style: Theme.of(context).textTheme.titleMedium
+                                      ?.copyWith(
+                                        color: AppColors.primary,
+                                        fontWeight: FontWeight.bold,
                                       ),
-                                    )
-                                  : const Icon(Icons.my_location, size: 18),
-                              label: const Text('Use Current GPS'),
-                              style: TextButton.styleFrom(
-                                foregroundColor: AppColors.secondary,
-                              ),
-                            ),
-                            // Map picker
-                            TextButton.icon(
-                              onPressed: _openMapPicker,
-                              icon: const Icon(Icons.map_outlined, size: 18),
-                              label: const Text('Pick on Map'),
-                              style: TextButton.styleFrom(
-                                foregroundColor: AppColors.primary,
-                              ),
-                            ),
-                            // Saved locations
-                            TextButton.icon(
-                              onPressed: _savedLocationsLoaded
-                                  ? _openSavedLocations
-                                  : null,
-                              icon: const Icon(
-                                Icons.bookmark_outlined,
-                                size: 18,
-                              ),
-                              label: Text(
-                                _savedLocations.isEmpty
-                                    ? 'Saved Locations'
-                                    : 'Saved Locations (${_savedLocations.length})',
-                              ),
-                              style: TextButton.styleFrom(
-                                foregroundColor: AppColors.warning,
-                              ),
-                            ),
-                          ],
-                        ),
-                        const SizedBox(height: 16),
-
-                        // Lat / Lng fields
-                        Row(
-                          children: [
-                            Expanded(
-                              child: TextFormField(
-                                controller: _latCtrl,
-                                keyboardType:
-                                    const TextInputType.numberWithOptions(
-                                      decimal: true,
-                                    ),
-                                decoration: const InputDecoration(
-                                  labelText: 'Latitude',
-                                  hintText: '-6.200000',
-                                  prefixIcon: Icon(Icons.location_on),
                                 ),
-                                validator: (val) {
-                                  if (val == null || val.trim().isEmpty) {
-                                    return 'Required';
-                                  }
-                                  if (double.tryParse(val) == null) {
-                                    return 'Invalid number';
-                                  }
-                                  return null;
-                                },
                               ),
-                            ),
-                            const SizedBox(width: 16),
-                            Expanded(
-                              child: TextFormField(
-                                controller: _lngCtrl,
-                                keyboardType:
-                                    const TextInputType.numberWithOptions(
-                                      decimal: true,
-                                    ),
-                                decoration: const InputDecoration(
-                                  labelText: 'Longitude',
-                                  hintText: '106.816666',
-                                  prefixIcon: Icon(Icons.location_on),
-                                ),
-                                validator: (val) {
-                                  if (val == null || val.trim().isEmpty) {
-                                    return 'Required';
-                                  }
-                                  if (double.tryParse(val) == null) {
-                                    return 'Invalid number';
-                                  }
-                                  return null;
-                                },
-                              ),
-                            ),
-                          ],
-                        ),
-                        const SizedBox(height: 16),
-                        TextFormField(
-                          controller: _radiusCtrl,
-                          keyboardType: TextInputType.number,
-                          decoration: const InputDecoration(
-                            labelText: 'Allowed Radius (meters)',
-                            hintText: '100',
-                            prefixIcon: Icon(Icons.radar),
+                            ],
                           ),
-                          validator: (val) {
-                            if (val == null || val.trim().isEmpty) {
-                              return 'Required';
-                            }
-                            final intVal = int.tryParse(val);
-                            if (intVal == null || intVal <= 0) {
-                              return 'Must be a positive integer';
-                            }
-                            return null;
-                          },
-                        ),
-                      ],
+                          const SizedBox(height: 16),
+
+                          // Action buttons row
+                          Wrap(
+                            spacing: 8,
+                            runSpacing: 8,
+                            children: [
+                              // Detect GPS
+                              TextButton.icon(
+                                onPressed: _detectingLocation
+                                    ? null
+                                    : _detectCurrentLocation,
+                                icon: _detectingLocation
+                                    ? const SizedBox(
+                                        width: 16,
+                                        height: 16,
+                                        child: CircularProgressIndicator(
+                                          strokeWidth: 2,
+                                          color: AppColors.secondary,
+                                        ),
+                                      )
+                                    : const Icon(Icons.my_location, size: 18),
+                                label: const Text('Use Current GPS'),
+                                style: TextButton.styleFrom(
+                                  foregroundColor: AppColors.secondary,
+                                ),
+                              ),
+                              // Map picker
+                              TextButton.icon(
+                                onPressed: _openMapPicker,
+                                icon: const Icon(Icons.map_outlined, size: 18),
+                                label: const Text('Pick on Map'),
+                                style: TextButton.styleFrom(
+                                  foregroundColor: AppColors.primary,
+                                ),
+                              ),
+                              // Saved locations
+                              TextButton.icon(
+                                onPressed: _savedLocationsLoaded
+                                    ? _openSavedLocations
+                                    : null,
+                                icon: const Icon(
+                                  Icons.bookmark_outlined,
+                                  size: 18,
+                                ),
+                                label: Text(
+                                  _savedLocations.isEmpty
+                                      ? 'Saved Locations'
+                                      : 'Saved Locations (${_savedLocations.length})',
+                                ),
+                                style: TextButton.styleFrom(
+                                  foregroundColor: AppColors.warning,
+                                ),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 16),
+
+                          // Lat / Lng fields
+                          Row(
+                            children: [
+                              Expanded(
+                                child: TextFormField(
+                                  controller: _latCtrl,
+                                  keyboardType:
+                                      const TextInputType.numberWithOptions(
+                                        decimal: true,
+                                      ),
+                                  decoration: const InputDecoration(
+                                    labelText: 'Latitude',
+                                    hintText: '-6.200000',
+                                    prefixIcon: Icon(Icons.location_on),
+                                  ),
+                                  validator: (val) {
+                                    if (val == null || val.trim().isEmpty) {
+                                      return 'Required';
+                                    }
+                                    if (double.tryParse(val) == null) {
+                                      return 'Invalid number';
+                                    }
+                                    return null;
+                                  },
+                                ),
+                              ),
+                              const SizedBox(width: 16),
+                              Expanded(
+                                child: TextFormField(
+                                  controller: _lngCtrl,
+                                  keyboardType:
+                                      const TextInputType.numberWithOptions(
+                                        decimal: true,
+                                      ),
+                                  decoration: const InputDecoration(
+                                    labelText: 'Longitude',
+                                    hintText: '106.816666',
+                                    prefixIcon: Icon(Icons.location_on),
+                                  ),
+                                  validator: (val) {
+                                    if (val == null || val.trim().isEmpty) {
+                                      return 'Required';
+                                    }
+                                    if (double.tryParse(val) == null) {
+                                      return 'Invalid number';
+                                    }
+                                    return null;
+                                  },
+                                ),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 16),
+                          TextFormField(
+                            controller: _radiusCtrl,
+                            keyboardType: TextInputType.number,
+                            decoration: const InputDecoration(
+                              labelText: 'Allowed Radius (meters)',
+                              hintText: '100',
+                              prefixIcon: Icon(Icons.radar),
+                            ),
+                            validator: (val) {
+                              if (val == null || val.trim().isEmpty) {
+                                return 'Required';
+                              }
+                              final intVal = int.tryParse(val);
+                              if (intVal == null || intVal <= 0) {
+                                return 'Must be a positive integer';
+                              }
+                              return null;
+                            },
+                          ),
+                        ],
+                      ),
                     ),
-                  ),
                   const SizedBox(height: 20),
 
-                  // ── Schedule ─────────────────────────────────────────────
+                  // ── Schedule ──────────────────────────────────
                   GlassCard(
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,

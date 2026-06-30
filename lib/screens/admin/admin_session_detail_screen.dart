@@ -541,22 +541,29 @@ class _AdminSessionDetailScreenState extends State<AdminSessionDetailScreen> {
                     LayoutBuilder(
                       builder: (context, constraints) {
                         final isNarrow = constraints.maxWidth < 600;
+                        final isOnline =
+                            session.attendanceMode == AttendanceMode.online;
                         return GridView.count(
                           shrinkWrap: true,
                           physics: const NeverScrollableScrollPhysics(),
-                          crossAxisCount: isNarrow ? 2 : 4,
+                          crossAxisCount: isNarrow ? 2 : 5,
                           childAspectRatio: isNarrow ? 2.2 : 2.5,
                           crossAxisSpacing: 16,
                           mainAxisSpacing: 16,
                           children: [
                             _buildInfoTile(
-                              'Location Target',
-                              '${session.targetLat.toStringAsFixed(5)}, ${session.targetLng.toStringAsFixed(5)}',
-                              Icons.location_on,
+                              'Mode',
+                              session.attendanceMode.label,
+                              _attendanceModeIcon(session.attendanceMode),
+                              iconColor: _attendanceModeColor(
+                                session.attendanceMode,
+                              ),
                             ),
                             _buildInfoTile(
                               'Allowed Radius',
-                              '${session.radiusMeters} meters',
+                              isOnline
+                                  ? 'N/A'
+                                  : '${session.radiusMeters} meters',
                               Icons.radar,
                             ),
                             _buildInfoTile(
@@ -773,8 +780,29 @@ class _AdminSessionDetailScreenState extends State<AdminSessionDetailScreen> {
                                   ),
                                 ),
                               ),
-                              DataCell(
-                                Row(
+                              DataCell(() {
+                                final hasLocation =
+                                    r.userLat != 0 || r.userLng != 0;
+                                if (!hasLocation) {
+                                  return Row(
+                                    children: [
+                                      const Icon(
+                                        Icons.location_off_outlined,
+                                        color: Colors.grey,
+                                        size: 16,
+                                      ),
+                                      const SizedBox(width: 6),
+                                      Text(
+                                        'N/A',
+                                        style: TextStyle(
+                                          color: Colors.grey[400],
+                                          fontWeight: FontWeight.bold,
+                                        ),
+                                      ),
+                                    ],
+                                  );
+                                }
+                                return Row(
                                   children: [
                                     Icon(
                                       isTooFar
@@ -796,8 +824,8 @@ class _AdminSessionDetailScreenState extends State<AdminSessionDetailScreen> {
                                       ),
                                     ),
                                   ],
-                                ),
-                              ),
+                                );
+                              }()),
                               DataCell(Text(timeFormat.format(r.submittedAt))),
                               DataCell(
                                 Text(
@@ -822,13 +850,18 @@ class _AdminSessionDetailScreenState extends State<AdminSessionDetailScreen> {
     );
   }
 
-  Widget _buildInfoTile(String label, String value, IconData icon) {
+  Widget _buildInfoTile(
+    String label,
+    String value,
+    IconData icon, {
+    Color? iconColor,
+  }) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Row(
           children: [
-            Icon(icon, size: 14, color: AppColors.secondary),
+            Icon(icon, size: 14, color: iconColor ?? AppColors.secondary),
             const SizedBox(width: 6),
             Text(
               label,
@@ -843,13 +876,29 @@ class _AdminSessionDetailScreenState extends State<AdminSessionDetailScreen> {
         const SizedBox(height: 6),
         SelectableText(
           value,
-          style: const TextStyle(
+          style: TextStyle(
             fontSize: 13,
             fontWeight: FontWeight.bold,
-            color: Colors.white,
+            color: iconColor ?? Colors.white,
           ),
         ),
       ],
     );
+  }
+
+  IconData _attendanceModeIcon(AttendanceMode mode) {
+    return switch (mode) {
+      AttendanceMode.offline => Icons.location_on,
+      AttendanceMode.online => Icons.language,
+      AttendanceMode.hybrid => Icons.swap_horiz,
+    };
+  }
+
+  Color _attendanceModeColor(AttendanceMode mode) {
+    return switch (mode) {
+      AttendanceMode.offline => AppColors.error,
+      AttendanceMode.online => AppColors.success,
+      AttendanceMode.hybrid => AppColors.warning,
+    };
   }
 }

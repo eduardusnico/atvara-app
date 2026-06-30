@@ -172,12 +172,27 @@ class _AttendFormScreenState extends State<AttendFormScreen> {
 
   Future<void> _submit() async {
     if (!_formKey.currentState!.validate()) return;
-    if (_locationState != _LocationState.inRange) return;
-    if (_selectedCompany == null || _selectedRole == null) return;
+
+    final mode = _session!.attendanceMode;
+
+    // For offline mode: location must be in range
+    if (mode == AttendanceMode.offline &&
+        _locationState != _LocationState.inRange) {
+      return;
+    }
+
+    if (_selectedCompany == null || _selectedRole == null) {
+      return;
+    }
 
     setState(() => _submitState = _SubmitState.submitting);
 
     final fingerprint = await FingerprintService.getFingerprint();
+
+    // Determine lat/lng/distance for the record
+    final double userLat = _userPosition?.latitude ?? 0;
+    final double userLng = _userPosition?.longitude ?? 0;
+    final double distance = _distanceMeters ?? 0;
 
     final record = AttendanceRecord(
       id: '',
@@ -189,9 +204,9 @@ class _AttendFormScreenState extends State<AttendFormScreen> {
       company: _selectedCompany!,
       role: _selectedRole!,
       submittedAt: DateTime.now(),
-      userLat: _userPosition!.latitude,
-      userLng: _userPosition!.longitude,
-      distanceMeters: _distanceMeters!,
+      userLat: userLat,
+      userLng: userLng,
+      distanceMeters: distance,
       deviceFingerprint: fingerprint,
     );
 
@@ -232,11 +247,10 @@ class _AttendFormScreenState extends State<AttendFormScreen> {
           iconColor: AppColors.error,
         ),
         _SessionState.inactive => _buildStatus(
-          icon: Icons.pause_circle_outline,
-          title: 'Session Inactive',
-          message:
-              'This attendance session is currently inactive. Please contact your organizer.',
-          iconColor: AppColors.warning,
+          icon: Icons.lock_clock,
+          title: 'Session Closed',
+          message: 'The attendance window has closed.',
+          iconColor: AppColors.textSecondary,
         ),
         _SessionState.upcoming => _buildStatus(
           icon: Icons.schedule,
@@ -326,9 +340,19 @@ class _AttendFormScreenState extends State<AttendFormScreen> {
   // ── Main Form ────────────────────────────────────────────────────────────
 
   Widget _buildForm() {
-    final canSubmit =
+    final mode = _session!.attendanceMode;
+
+    // canSubmit logic differs per mode:
+    // - offline: must be in range
+    // - hybrid: location optional, just not currently submitting
+    // - online: no location needed
+    final canSubmit = switch (mode) {
+      AttendanceMode.offline =>
         _locationState == _LocationState.inRange &&
-        _submitState != _SubmitState.submitting;
+            _submitState != _SubmitState.submitting,
+      AttendanceMode.hybrid ||
+      AttendanceMode.online => _submitState != _SubmitState.submitting,
+    };
 
     return Center(
       child: SingleChildScrollView(
@@ -344,9 +368,11 @@ class _AttendFormScreenState extends State<AttendFormScreen> {
               _buildSessionHeader(),
               const SizedBox(height: 16),
 
-              // Location card
-              _buildLocationCard(),
-              const SizedBox(height: 16),
+              // Location card — shown for offline/hybrid, hidden for online
+              if (mode != AttendanceMode.online) ...[
+                _buildLocationCard(),
+                const SizedBox(height: 16),
+              ],
 
               // Form card
               GlassCard(
@@ -426,8 +452,9 @@ class _AttendFormScreenState extends State<AttendFormScreen> {
                               child: Padding(
                                 padding: EdgeInsets.symmetric(vertical: 8),
                                 child: CircularProgressIndicator(
-                                    strokeWidth: 2,
-                                    color: AppColors.primary),
+                                  strokeWidth: 2,
+                                  color: AppColors.primary,
+                                ),
                               ),
                             )
                           : DropdownButtonFormField<String>(
@@ -446,14 +473,16 @@ class _AttendFormScreenState extends State<AttendFormScreen> {
                                     c,
                                     overflow: TextOverflow.ellipsis,
                                     style: const TextStyle(
-                                        color: AppColors.textPrimary),
+                                      color: AppColors.textPrimary,
+                                    ),
                                   ),
                                 );
                               }).toList(),
                               onChanged: (v) =>
                                   setState(() => _selectedCompany = v),
-                              validator: (v) =>
-                                  v == null ? 'Please select your company' : null,
+                              validator: (v) => v == null
+                                  ? 'Please select your company'
+                                  : null,
                             ),
                       const SizedBox(height: 14),
 
@@ -498,21 +527,25 @@ class _AttendFormScreenState extends State<AttendFormScreen> {
   Widget _buildRoleSelector() {
     return FormField<String>(
       initialValue: _selectedRole,
-      validator: (v) => (v == null || v.isEmpty) ? 'Please select your role' : null,
+      validator: (v) =>
+          (v == null || v.isEmpty) ? 'Please select your role' : null,
       builder: (field) {
         return Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Row(
               children: [
-                const Icon(Icons.badge_outlined,
-                    color: AppColors.textSecondary, size: 20),
+                const Icon(
+                  Icons.badge_outlined,
+                  color: AppColors.textSecondary,
+                  size: 20,
+                ),
                 const SizedBox(width: 8),
                 Text(
                   'Participation Role',
                   style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                        color: AppColors.textSecondary,
-                      ),
+                    color: AppColors.textSecondary,
+                  ),
                 ),
               ],
             ),
@@ -529,8 +562,7 @@ class _AttendFormScreenState extends State<AttendFormScreen> {
                 padding: const EdgeInsets.only(top: 6, left: 12),
                 child: Text(
                   field.errorText!,
-                  style: const TextStyle(
-                      color: AppColors.error, fontSize: 12),
+                  style: const TextStyle(color: AppColors.error, fontSize: 12),
                 ),
               ),
           ],
@@ -559,9 +591,11 @@ class _AttendFormScreenState extends State<AttendFormScreen> {
         child: Row(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Icon(icon,
-                color: selected ? AppColors.primary : AppColors.textSecondary,
-                size: 18),
+            Icon(
+              icon,
+              color: selected ? AppColors.primary : AppColors.textSecondary,
+              size: 18,
+            ),
             const SizedBox(width: 8),
             Text(
               role,
@@ -682,6 +716,9 @@ class _AttendFormScreenState extends State<AttendFormScreen> {
   }
 
   Widget _buildLocationCard() {
+    final mode = _session!.attendanceMode;
+    final isHybrid = mode == AttendanceMode.hybrid;
+
     return GlassCard(
       padding: const EdgeInsets.all(20),
       child: Column(
@@ -689,21 +726,49 @@ class _AttendFormScreenState extends State<AttendFormScreen> {
         children: [
           Row(
             children: [
-              const Icon(
-                Icons.location_on_outlined,
-                color: AppColors.primary,
+              Icon(
+                isHybrid
+                    ? Icons.location_searching
+                    : Icons.location_on_outlined,
+                color: isHybrid ? AppColors.warning : AppColors.primary,
                 size: 20,
               ),
               const SizedBox(width: 8),
               Text(
-                'Location Verification',
+                isHybrid ? 'Location (Optional)' : 'Location Verification',
                 style: Theme.of(context).textTheme.titleMedium,
               ),
+              if (isHybrid) ...[
+                const SizedBox(width: 8),
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 7,
+                    vertical: 2,
+                  ),
+                  decoration: BoxDecoration(
+                    color: AppColors.warning.withValues(alpha: 0.12),
+                    borderRadius: BorderRadius.circular(20),
+                    border: Border.all(
+                      color: AppColors.warning.withValues(alpha: 0.4),
+                    ),
+                  ),
+                  child: const Text(
+                    'optional',
+                    style: TextStyle(
+                      color: AppColors.warning,
+                      fontSize: 10,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ),
+              ],
             ],
           ),
           const SizedBox(height: 4),
           Text(
-            'You must be within ${_session!.radiusMeters}m of the event location.',
+            isHybrid
+                ? 'Your location is informational only — you can still submit without being at the venue.'
+                : 'You must be within ${_session!.radiusMeters}m of the event location.',
             style: Theme.of(context).textTheme.bodySmall,
           ),
           const SizedBox(height: 16),
@@ -724,8 +789,12 @@ class _AttendFormScreenState extends State<AttendFormScreen> {
                       : 'Try Again',
                 ),
                 style: OutlinedButton.styleFrom(
-                  foregroundColor: AppColors.primary,
-                  side: const BorderSide(color: AppColors.primary),
+                  foregroundColor: isHybrid
+                      ? AppColors.warning
+                      : AppColors.primary,
+                  side: BorderSide(
+                    color: isHybrid ? AppColors.warning : AppColors.primary,
+                  ),
                   padding: const EdgeInsets.symmetric(vertical: 12),
                   shape: RoundedRectangleBorder(
                     borderRadius: BorderRadius.circular(12),

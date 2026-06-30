@@ -327,6 +327,11 @@ class _AdminSessionsScreenState extends State<AdminSessionsScreen> {
                         ),
                         const SizedBox(width: 8),
                         _statusBadge(status.label, statusColor),
+                        const SizedBox(width: 8),
+                        _statusBadge(
+                          session.attendanceMode.label,
+                          _modeColor(session.attendanceMode),
+                        ),
                       ],
                     ),
                     if (session.description != null &&
@@ -353,8 +358,10 @@ class _AdminSessionsScreenState extends State<AdminSessionsScreen> {
               ),
               const SizedBox(width: 12),
               _infoChip(Icons.people, '${session.attendeeCount} attendees'),
-              const SizedBox(width: 12),
-              _infoChip(Icons.radar, '${session.radiusMeters}m radius'),
+              if (session.attendanceMode != AttendanceMode.online) ...[
+                const SizedBox(width: 12),
+                _infoChip(Icons.radar, '${session.radiusMeters}m radius'),
+              ],
             ],
           ),
           const SizedBox(height: 14),
@@ -433,5 +440,13 @@ class _AdminSessionsScreenState extends State<AdminSessionsScreen> {
         Text(label, style: Theme.of(context).textTheme.bodySmall),
       ],
     );
+  }
+
+  Color _modeColor(AttendanceMode mode) {
+    return switch (mode) {
+      AttendanceMode.offline => AppColors.primary,
+      AttendanceMode.online => AppColors.success,
+      AttendanceMode.hybrid => AppColors.warning,
+    };
   }
 }

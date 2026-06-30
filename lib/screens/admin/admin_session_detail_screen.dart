@@ -526,6 +526,20 @@ class _AdminSessionDetailScreenState extends State<AdminSessionDetailScreen> {
                               ),
                             ),
                             const SizedBox(width: 12),
+                            OutlinedButton.icon(
+                              onPressed: () => context.go(
+                                '/admin/sessions/${session.id}/edit',
+                              ),
+                              icon: const Icon(Icons.edit, size: 16),
+                              label: const Text('Edit'),
+                              style: OutlinedButton.styleFrom(
+                                foregroundColor: AppColors.primary,
+                                side: BorderSide(
+                                  color: AppColors.primary.withValues(alpha: 0.5),
+                                ),
+                              ),
+                            ),
+                            const SizedBox(width: 12),
                             GradientButton(
                               label: 'QR Code',
                               icon: Icons.qr_code,

@@ -1,4 +1,5 @@
 import 'package:atvara_app/screens/admin/admin_create_session_screen.dart';
+import 'package:atvara_app/screens/admin/admin_edit_session_screen.dart';
 import 'package:atvara_app/screens/admin/admin_session_detail_screen.dart';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
@@ -78,6 +79,13 @@ final GoRouter appRouter = GoRouter(
       builder: (context, state) {
         final id = state.pathParameters['id']!;
         return AdminSessionDetailScreen(sessionId: id);
+      },
+    ),
+    GoRoute(
+      path: '/admin/sessions/:id/edit',
+      builder: (context, state) {
+        final id = state.pathParameters['id']!;
+        return AdminEditSessionScreen(sessionId: id);
       },
     ),
     GoRoute(

@@ -64,4 +64,12 @@ class SessionService {
   static Future<void> deleteSession(String sessionId) async {
     await _db.from('sessions').delete().eq('id', sessionId);
   }
+
+  /// Updates an existing session's fields.
+  static Future<void> updateSession(Session session) async {
+    await _db
+        .from('sessions')
+        .update(session.toInsertJson())
+        .eq('id', session.id);
+  }
 }

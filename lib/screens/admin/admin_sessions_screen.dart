@@ -85,8 +85,6 @@ class _AdminSessionsScreenState extends State<AdminSessionsScreen> {
 
   int get _openCount =>
       _sessions.where((s) => s.status == SessionStatus.open).length;
-  int get _totalAttendees =>
-      _sessions.fold(0, (sum, s) => sum + s.attendeeCount);
 
   @override
   Widget build(BuildContext context) {
@@ -120,6 +118,11 @@ class _AdminSessionsScreenState extends State<AdminSessionsScreen> {
         ],
       ),
       actions: [
+        IconButton(
+          onPressed: () => context.go('/admin/companies'),
+          icon: const Icon(Icons.business),
+          tooltip: 'Manage Companies',
+        ),
         IconButton(
           onPressed: _load,
           icon: const Icon(Icons.refresh),
@@ -211,15 +214,6 @@ class _AdminSessionsScreenState extends State<AdminSessionsScreen> {
                       '$_openCount',
                       Icons.check_circle,
                       AppColors.success,
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: _statCard(
-                      'Total Attendees',
-                      '$_totalAttendees',
-                      Icons.people,
-                      AppColors.secondary,
                     ),
                   ),
                 ],

@@ -32,6 +32,10 @@ dependencies:
   crypto: ^3.0.3
   csv: ^6.0.0
 
+  # Map
+  flutter_map: ^7.0.2
+  latlong2: ^0.9.1
+
   # Fonts
   google_fonts: ^8.1.0
   sizer: ^3.1.3

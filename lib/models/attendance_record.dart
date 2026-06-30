@@ -5,6 +5,8 @@ class AttendanceRecord {
   final String email;
   final String managerName;
   final String division;
+  final String company;
+  final String role; // 'Trainer' or 'Participant'
   final DateTime submittedAt;
   final double userLat;
   final double userLng;
@@ -18,6 +20,8 @@ class AttendanceRecord {
     required this.email,
     required this.managerName,
     required this.division,
+    required this.company,
+    required this.role,
     required this.submittedAt,
     required this.userLat,
     required this.userLng,
@@ -33,6 +37,8 @@ class AttendanceRecord {
         email: json['email'] as String,
         managerName: json['manager_name'] as String,
         division: json['division'] as String,
+        company: json['company'] as String? ?? '',
+        role: json['role'] as String? ?? '',
         submittedAt:
             DateTime.parse(json['submitted_at'] as String).toLocal(),
         userLat: (json['user_lat'] as num).toDouble(),
@@ -47,6 +53,8 @@ class AttendanceRecord {
         'email': email,
         'manager_name': managerName,
         'division': division,
+        'company': company,
+        'role': role,
         'user_lat': userLat,
         'user_lng': userLng,
         'distance_meters': distanceMeters,

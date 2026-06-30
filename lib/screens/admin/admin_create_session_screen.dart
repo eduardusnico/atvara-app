@@ -1,6 +1,9 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_map/flutter_map.dart';
 import 'package:go_router/go_router.dart';
 import 'package:intl/intl.dart';
+import 'package:latlong2/latlong.dart';
+
 import '../../models/session.dart';
 import '../../services/location_service.dart';
 import '../../services/session_service.dart';
@@ -14,6 +17,9 @@ class AdminCreateSessionScreen extends StatefulWidget {
   State<AdminCreateSessionScreen> createState() =>
       _AdminCreateSessionScreenState();
 }
+
+// Remember the last-used coordinates across screen visits within the session.
+LatLng? _recentLocation;
 
 class _AdminCreateSessionScreenState extends State<AdminCreateSessionScreen> {
   final _formKey = GlobalKey<FormState>();
@@ -31,6 +37,7 @@ class _AdminCreateSessionScreenState extends State<AdminCreateSessionScreen> {
   bool _loading = false;
   bool _detectingLocation = false;
   String? _errorMessage;
+
   @override
   void dispose() {
     _nameCtrl.dispose();
@@ -40,6 +47,18 @@ class _AdminCreateSessionScreenState extends State<AdminCreateSessionScreen> {
     _radiusCtrl.dispose();
     super.dispose();
   }
+
+  // ── Coordinate helpers ─────────────────────────────────────────────────────
+
+  void _fillCoords(double lat, double lng) {
+    setState(() {
+      _latCtrl.text = lat.toStringAsFixed(6);
+      _lngCtrl.text = lng.toStringAsFixed(6);
+      _recentLocation = LatLng(lat, lng);
+    });
+  }
+
+  // ── Date / Time pickers ────────────────────────────────────────────────────
 
   Future<void> _selectDate(BuildContext context, bool isStart) async {
     final DateTime? picked = await showDatePicker(
@@ -101,6 +120,8 @@ class _AdminCreateSessionScreenState extends State<AdminCreateSessionScreen> {
     }
   }
 
+  // ── GPS detection ──────────────────────────────────────────────────────────
+
   Future<void> _detectCurrentLocation() async {
     setState(() {
       _detectingLocation = true;
@@ -113,8 +134,7 @@ class _AdminCreateSessionScreenState extends State<AdminCreateSessionScreen> {
     });
     if (result.isSuccess) {
       final pos = result.position!;
-      _latCtrl.text = pos.latitude.toStringAsFixed(6);
-      _lngCtrl.text = pos.longitude.toStringAsFixed(6);
+      _fillCoords(pos.latitude, pos.longitude);
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           content: Text('Successfully detected current coordinates'),
@@ -127,6 +147,45 @@ class _AdminCreateSessionScreenState extends State<AdminCreateSessionScreen> {
       });
     }
   }
+
+  // ── Map picker ─────────────────────────────────────────────────────────────
+
+  Future<void> _openMapPicker() async {
+    // Default center: Jakarta if no recent location
+    LatLng center = _recentLocation ??
+        const LatLng(-6.2088, 106.8456); // Jakarta
+
+    // Read current field values if valid
+    final curLat = double.tryParse(_latCtrl.text);
+    final curLng = double.tryParse(_lngCtrl.text);
+    if (curLat != null && curLng != null) {
+      center = LatLng(curLat, curLng);
+    }
+
+    final result = await showDialog<LatLng>(
+      context: context,
+      builder: (ctx) => _MapPickerDialog(initialCenter: center),
+    );
+
+    if (result != null) {
+      _fillCoords(result.latitude, result.longitude);
+    }
+  }
+
+  // ── Use recent location ────────────────────────────────────────────────────
+
+  void _useRecentLocation() {
+    if (_recentLocation == null) return;
+    _fillCoords(_recentLocation!.latitude, _recentLocation!.longitude);
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('Recent location applied'),
+        backgroundColor: AppColors.success,
+      ),
+    );
+  }
+
+  // ── Save session ───────────────────────────────────────────────────────────
 
   Future<void> _save() async {
     if (!_formKey.currentState!.validate()) return;
@@ -295,21 +354,29 @@ class _AdminCreateSessionScreenState extends State<AdminCreateSessionScreen> {
                     ),
                   ),
                   const SizedBox(height: 20),
+
+                  // ── Geofencing Card ─────────────────────────────────────
                   GlassCard(
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Row(
-                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        // Title row
+                        Text(
+                          'Location Settings',
+                          style: Theme.of(context).textTheme.titleMedium
+                              ?.copyWith(
+                                color: AppColors.primary,
+                                fontWeight: FontWeight.bold,
+                              ),
+                        ),
+                        const SizedBox(height: 16),
+
+                        // Action buttons row
+                        Wrap(
+                          spacing: 8,
+                          runSpacing: 8,
                           children: [
-                            Text(
-                              'Geofencing Requirements',
-                              style: Theme.of(context).textTheme.titleMedium
-                                  ?.copyWith(
-                                    color: AppColors.primary,
-                                    fontWeight: FontWeight.bold,
-                                  ),
-                            ),
+                            // Detect GPS
                             TextButton.icon(
                               onPressed: _detectingLocation
                                   ? null
@@ -323,15 +390,39 @@ class _AdminCreateSessionScreenState extends State<AdminCreateSessionScreen> {
                                         color: AppColors.secondary,
                                       ),
                                     )
-                                  : const Icon(Icons.my_location),
+                                  : const Icon(Icons.my_location, size: 18),
                               label: const Text('Use Current GPS'),
                               style: TextButton.styleFrom(
                                 foregroundColor: AppColors.secondary,
                               ),
                             ),
+                            // Map picker
+                            TextButton.icon(
+                              onPressed: _openMapPicker,
+                              icon: const Icon(Icons.map_outlined, size: 18),
+                              label: const Text('Pick on Map'),
+                              style: TextButton.styleFrom(
+                                foregroundColor: AppColors.primary,
+                              ),
+                            ),
+                            // Recent location
+                            if (_recentLocation != null)
+                              TextButton.icon(
+                                onPressed: _useRecentLocation,
+                                icon: const Icon(Icons.history, size: 18),
+                                label: Text(
+                                  'Recent (${_recentLocation!.latitude.toStringAsFixed(3)}, '
+                                  '${_recentLocation!.longitude.toStringAsFixed(3)})',
+                                ),
+                                style: TextButton.styleFrom(
+                                  foregroundColor: AppColors.warning,
+                                ),
+                              ),
                           ],
                         ),
                         const SizedBox(height: 16),
+
+                        // Lat / Lng fields
                         Row(
                           children: [
                             Expanded(
@@ -407,6 +498,8 @@ class _AdminCreateSessionScreenState extends State<AdminCreateSessionScreen> {
                     ),
                   ),
                   const SizedBox(height: 20),
+
+                  // ── Schedule ─────────────────────────────────────────────
                   GlassCard(
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
@@ -552,6 +645,170 @@ class _AdminCreateSessionScreenState extends State<AdminCreateSessionScreen> {
               ),
             ),
           ),
+        ),
+      ),
+    );
+  }
+}
+
+// ── Map Picker Dialog ─────────────────────────────────────────────────────────
+
+class _MapPickerDialog extends StatefulWidget {
+  final LatLng initialCenter;
+
+  const _MapPickerDialog({required this.initialCenter});
+
+  @override
+  State<_MapPickerDialog> createState() => _MapPickerDialogState();
+}
+
+class _MapPickerDialogState extends State<_MapPickerDialog> {
+  late LatLng _selectedPoint;
+  late final MapController _mapController;
+
+  @override
+  void initState() {
+    super.initState();
+    _selectedPoint = widget.initialCenter;
+    _mapController = MapController();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Dialog(
+      backgroundColor: AppColors.surface,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      child: SizedBox(
+        width: 700,
+        height: 520,
+        child: Column(
+          children: [
+            // Header
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 16, 8, 0),
+              child: Row(
+                children: [
+                  const Icon(Icons.map_outlined, color: AppColors.primary),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Text(
+                      'Pick Location on Map',
+                      style: Theme.of(context)
+                          .textTheme
+                          .titleLarge
+                          ?.copyWith(fontWeight: FontWeight.bold),
+                    ),
+                  ),
+                  IconButton(
+                    icon: const Icon(Icons.close),
+                    onPressed: () => Navigator.pop(context),
+                  ),
+                ],
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 6),
+              child: Text(
+                'Tap anywhere on the map to set the geofence center.',
+                style: Theme.of(context)
+                    .textTheme
+                    .bodySmall
+                    ?.copyWith(color: Colors.grey[400]),
+              ),
+            ),
+            const Divider(color: Colors.white12),
+
+            // Map
+            Expanded(
+              child: ClipRRect(
+                borderRadius: const BorderRadius.vertical(
+                    bottom: Radius.circular(0)),
+                child: FlutterMap(
+                  mapController: _mapController,
+                  options: MapOptions(
+                    initialCenter: widget.initialCenter,
+                    initialZoom: 15,
+                    onTap: (tapPosition, point) {
+                      setState(() => _selectedPoint = point);
+                    },
+                  ),
+                  children: [
+                    TileLayer(
+                      urlTemplate:
+                          'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+                      userAgentPackageName: 'com.atvara.app',
+                    ),
+                    MarkerLayer(
+                      markers: [
+                        Marker(
+                          point: _selectedPoint,
+                          width: 40,
+                          height: 40,
+                          child: const Icon(
+                            Icons.location_pin,
+                            color: AppColors.error,
+                            size: 40,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+            ),
+
+            // Coordinate display + confirm
+            Container(
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: Colors.white.withValues(alpha: 0.05),
+                borderRadius:
+                    const BorderRadius.vertical(bottom: Radius.circular(16)),
+              ),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'Selected Coordinates',
+                          style: Theme.of(context)
+                              .textTheme
+                              .bodySmall
+                              ?.copyWith(color: Colors.grey[400]),
+                        ),
+                        const SizedBox(height: 2),
+                        Text(
+                          '${_selectedPoint.latitude.toStringAsFixed(6)}, '
+                          '${_selectedPoint.longitude.toStringAsFixed(6)}',
+                          style: const TextStyle(
+                            color: AppColors.primary,
+                            fontWeight: FontWeight.bold,
+                            fontFamily: 'monospace',
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  TextButton(
+                    onPressed: () => Navigator.pop(context),
+                    child: const Text('Cancel'),
+                  ),
+                  const SizedBox(width: 8),
+                  ElevatedButton.icon(
+                    onPressed: () => Navigator.pop(context, _selectedPoint),
+                    icon: const Icon(Icons.check),
+                    label: const Text('Use This Location'),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: AppColors.primary,
+                      foregroundColor: Colors.white,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
         ),
       ),
     );

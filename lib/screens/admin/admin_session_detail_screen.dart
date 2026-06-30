@@ -114,7 +114,9 @@ class _AdminSessionDetailScreenState extends State<AdminSessionDetailScreen> {
         return r.name.toLowerCase().contains(_searchQuery) ||
             r.email.toLowerCase().contains(_searchQuery) ||
             r.managerName.toLowerCase().contains(_searchQuery) ||
-            r.division.toLowerCase().contains(_searchQuery);
+            r.division.toLowerCase().contains(_searchQuery) ||
+            r.company.toLowerCase().contains(_searchQuery) ||
+            r.role.toLowerCase().contains(_searchQuery);
       }).toList();
     }
   }
@@ -158,6 +160,8 @@ class _AdminSessionDetailScreenState extends State<AdminSessionDetailScreen> {
       'Email',
       'Manager Name',
       'Division',
+      'Company',
+      'Role',
       'Latitude',
       'Longitude',
       'Distance (m)',
@@ -170,6 +174,8 @@ class _AdminSessionDetailScreenState extends State<AdminSessionDetailScreen> {
         r.email,
         r.managerName,
         r.division,
+        r.company,
+        r.role,
         r.userLat,
         r.userLng,
         r.distanceMeters.toStringAsFixed(1),
@@ -274,6 +280,57 @@ class _AdminSessionDetailScreenState extends State<AdminSessionDetailScreen> {
           TextButton(
             onPressed: () => Navigator.pop(ctx),
             child: const Text('Close'),
+          ),
+          ElevatedButton.icon(
+            onPressed: () async {
+              // Render QR to image and download as PNG
+              if (!kIsWeb) return;
+              try {
+                final painter = QrPainter(
+                  data: attendeeUrl,
+                  version: QrVersions.auto,
+                  eyeStyle: const QrEyeStyle(
+                    eyeShape: QrEyeShape.square,
+                    color: Colors.black,
+                  ),
+                  dataModuleStyle: const QrDataModuleStyle(
+                    dataModuleShape: QrDataModuleShape.square,
+                    color: Colors.black,
+                  ),
+                );
+                final imageData = await painter.toImageData(1024);
+                if (imageData == null) return;
+                final blob = html.Blob(
+                  [imageData.buffer.asUint8List()],
+                  'image/png',
+                );
+                final url = html.Url.createObjectUrlFromBlob(blob);
+                final anchor =
+                    html.document.createElement('a') as html.AnchorElement
+                      ..href = url
+                      ..style.display = 'none'
+                      ..download =
+                          'qr_${_session!.name.replaceAll(' ', '_')}.png';
+                html.document.body!.children.add(anchor);
+                anchor.click();
+                html.document.body!.children.remove(anchor);
+                html.Url.revokeObjectUrl(url);
+                if (ctx.mounted) Navigator.pop(ctx);
+              } catch (e) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(
+                    content: Text('Failed to download QR: $e'),
+                    backgroundColor: AppColors.error,
+                  ),
+                );
+              }
+            },
+            icon: const Icon(Icons.download),
+            label: const Text('Download QR'),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: AppColors.secondary,
+              foregroundColor: Colors.white,
+            ),
           ),
           ElevatedButton.icon(
             onPressed: () {
@@ -619,6 +676,18 @@ class _AdminSessionDetailScreenState extends State<AdminSessionDetailScreen> {
                           ),
                           DataColumn(
                             label: Text(
+                              'Company',
+                              style: TextStyle(fontWeight: FontWeight.bold),
+                            ),
+                          ),
+                          DataColumn(
+                            label: Text(
+                              'Role',
+                              style: TextStyle(fontWeight: FontWeight.bold),
+                            ),
+                          ),
+                          DataColumn(
+                            label: Text(
                               'Distance',
                               style: TextStyle(fontWeight: FontWeight.bold),
                             ),
@@ -652,6 +721,37 @@ class _AdminSessionDetailScreenState extends State<AdminSessionDetailScreen> {
                               DataCell(Text(r.email)),
                               DataCell(Text(r.managerName)),
                               DataCell(Text(r.division)),
+                              DataCell(
+                                ConstrainedBox(
+                                  constraints: const BoxConstraints(maxWidth: 200),
+                                  child: Text(
+                                    r.company,
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                ),
+                              ),
+                              DataCell(
+                                Container(
+                                  padding: const EdgeInsets.symmetric(
+                                      horizontal: 8, vertical: 3),
+                                  decoration: BoxDecoration(
+                                    color: r.role == 'Trainer'
+                                        ? AppColors.primary.withValues(alpha: 0.15)
+                                        : AppColors.success.withValues(alpha: 0.15),
+                                    borderRadius: BorderRadius.circular(20),
+                                  ),
+                                  child: Text(
+                                    r.role.isEmpty ? '—' : r.role,
+                                    style: TextStyle(
+                                      fontSize: 12,
+                                      color: r.role == 'Trainer'
+                                          ? AppColors.primary
+                                          : AppColors.success,
+                                      fontWeight: FontWeight.bold,
+                                    ),
+                                  ),
+                                ),
+                              ),
                               DataCell(
                                 Row(
                                   children: [

@@ -8,8 +8,7 @@ import 'screens/attend/attend_form_screen.dart';
 import 'screens/attend/attend_success_screen.dart';
 import 'screens/admin/admin_login_screen.dart';
 import 'screens/admin/admin_sessions_screen.dart';
-// import 'screens/admin/admin_create_session_screen.dart';
-// import 'screens/admin/admin_session_detail_screen.dart';
+import 'screens/admin/admin_companies_screen.dart';
 
 /// Global admin authentication state.
 final adminAuthNotifier = ValueNotifier<bool>(false);
@@ -80,6 +79,10 @@ final GoRouter appRouter = GoRouter(
         final id = state.pathParameters['id']!;
         return AdminSessionDetailScreen(sessionId: id);
       },
+    ),
+    GoRoute(
+      path: '/admin/companies',
+      builder: (context, state) => const AdminCompaniesScreen(),
     ),
   ],
 );

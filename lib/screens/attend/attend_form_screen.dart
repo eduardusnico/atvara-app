@@ -6,6 +6,7 @@ import 'package:intl/intl.dart';
 import '../../models/attendance_record.dart';
 import '../../models/session.dart';
 import '../../services/attendance_service.dart';
+import '../../services/company_service.dart';
 import '../../services/fingerprint_service.dart';
 import '../../services/location_service.dart';
 import '../../services/session_service.dart';
@@ -57,6 +58,14 @@ class _AttendFormScreenState extends State<AttendFormScreen> {
   final _managerCtrl = TextEditingController();
   final _divisionCtrl = TextEditingController();
 
+  // Company dropdown
+  List<String> _companies = [];
+  String? _selectedCompany;
+  bool _loadingCompanies = true;
+
+  // Role selection
+  String? _selectedRole; // 'Trainer' or 'Participant'
+
   // Submit
   _SubmitState _submitState = _SubmitState.idle;
 
@@ -64,6 +73,7 @@ class _AttendFormScreenState extends State<AttendFormScreen> {
   void initState() {
     super.initState();
     _loadSession();
+    _loadCompanies();
   }
 
   @override
@@ -98,6 +108,25 @@ class _AttendFormScreenState extends State<AttendFormScreen> {
       });
     } catch (_) {
       if (mounted) setState(() => _sessionState = _SessionState.notFound);
+    }
+  }
+
+  Future<void> _loadCompanies() async {
+    try {
+      final list = await CompanyService.getCompanies();
+      if (mounted) {
+        setState(() {
+          _companies = list;
+          _loadingCompanies = false;
+        });
+      }
+    } catch (_) {
+      if (mounted) {
+        setState(() {
+          _companies = kDefaultCompanies;
+          _loadingCompanies = false;
+        });
+      }
     }
   }
 
@@ -144,6 +173,7 @@ class _AttendFormScreenState extends State<AttendFormScreen> {
   Future<void> _submit() async {
     if (!_formKey.currentState!.validate()) return;
     if (_locationState != _LocationState.inRange) return;
+    if (_selectedCompany == null || _selectedRole == null) return;
 
     setState(() => _submitState = _SubmitState.submitting);
 
@@ -156,6 +186,8 @@ class _AttendFormScreenState extends State<AttendFormScreen> {
       email: _emailCtrl.text.trim().toLowerCase(),
       managerName: _managerCtrl.text.trim(),
       division: _divisionCtrl.text.trim(),
+      company: _selectedCompany!,
+      role: _selectedRole!,
       submittedAt: DateTime.now(),
       userLat: _userPosition!.latitude,
       userLng: _userPosition!.longitude,
@@ -386,6 +418,47 @@ class _AttendFormScreenState extends State<AttendFormScreen> {
                             ? 'Division is required'
                             : null,
                       ),
+                      const SizedBox(height: 14),
+
+                      // ── Company Dropdown ──────────────────────────────
+                      _loadingCompanies
+                          ? const Center(
+                              child: Padding(
+                                padding: EdgeInsets.symmetric(vertical: 8),
+                                child: CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                    color: AppColors.primary),
+                              ),
+                            )
+                          : DropdownButtonFormField<String>(
+                              value: _selectedCompany,
+                              isExpanded: true,
+                              decoration: AppTheme.inputDecoration(
+                                label: 'Company',
+                                hint: 'Select your company',
+                                prefixIcon: Icons.corporate_fare,
+                              ),
+                              dropdownColor: AppColors.surface,
+                              items: _companies.map((c) {
+                                return DropdownMenuItem(
+                                  value: c,
+                                  child: Text(
+                                    c,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: const TextStyle(
+                                        color: AppColors.textPrimary),
+                                  ),
+                                );
+                              }).toList(),
+                              onChanged: (v) =>
+                                  setState(() => _selectedCompany = v),
+                              validator: (v) =>
+                                  v == null ? 'Please select your company' : null,
+                            ),
+                      const SizedBox(height: 14),
+
+                      // ── Role Selection ────────────────────────────────
+                      _buildRoleSelector(),
                       const SizedBox(height: 24),
 
                       // Error feedback
@@ -421,6 +494,87 @@ class _AttendFormScreenState extends State<AttendFormScreen> {
   }
 
   // ── Sub-Widgets ──────────────────────────────────────────────────────────
+
+  Widget _buildRoleSelector() {
+    return FormField<String>(
+      initialValue: _selectedRole,
+      validator: (v) => (v == null || v.isEmpty) ? 'Please select your role' : null,
+      builder: (field) {
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                const Icon(Icons.badge_outlined,
+                    color: AppColors.textSecondary, size: 20),
+                const SizedBox(width: 8),
+                Text(
+                  'Participation Role',
+                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                        color: AppColors.textSecondary,
+                      ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 10),
+            Row(
+              children: [
+                Expanded(child: _roleChip('Participant', Icons.people_outline)),
+                const SizedBox(width: 12),
+                Expanded(child: _roleChip('Trainer', Icons.school_outlined)),
+              ],
+            ),
+            if (field.hasError)
+              Padding(
+                padding: const EdgeInsets.only(top: 6, left: 12),
+                child: Text(
+                  field.errorText!,
+                  style: const TextStyle(
+                      color: AppColors.error, fontSize: 12),
+                ),
+              ),
+          ],
+        );
+      },
+    );
+  }
+
+  Widget _roleChip(String role, IconData icon) {
+    final selected = _selectedRole == role;
+    return GestureDetector(
+      onTap: () => setState(() => _selectedRole = role),
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 200),
+        padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 16),
+        decoration: BoxDecoration(
+          color: selected
+              ? AppColors.primary.withValues(alpha: 0.15)
+              : Colors.transparent,
+          border: Border.all(
+            color: selected ? AppColors.primary : AppColors.cardBorder,
+            width: selected ? 2 : 1,
+          ),
+          borderRadius: BorderRadius.circular(12),
+        ),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(icon,
+                color: selected ? AppColors.primary : AppColors.textSecondary,
+                size: 18),
+            const SizedBox(width: 8),
+            Text(
+              role,
+              style: TextStyle(
+                color: selected ? AppColors.primary : AppColors.textSecondary,
+                fontWeight: selected ? FontWeight.bold : FontWeight.normal,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
 
   Widget _buildBrand(BuildContext context) {
     return Row(
